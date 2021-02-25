@@ -79,12 +79,34 @@ type Rabbit struct {
 }
 
 // Mode is the type used to represent whether the RabbitMQ
-// cliens is acting as a consumer, a producer, or both.
+// client is acting as a consumer, a producer, or both.
 type Mode int
 
 // Binding represents the information needed to bind a queue to
 // an Exchange.
 type Binding struct {
+	// Required
+	ExchangeName string
+
+	// Bind a queue to one or more routing keys
+	BindingKeys []string
+
+	// Whether to declare/create exchange on connect
+	ExchangeDeclare bool
+
+	// Required if declaring queue (valid: direct, fanout, topic, headers)
+	ExchangeType string
+
+	// Whether exchange should survive/persist server restarts
+	ExchangeDurable bool
+
+	// Whether to delete exchange when its no longer used; used only if ExchangeDeclare set to true
+	ExchangeAutoDelete bool
+}
+
+// ExchangeBinding represents the information needed to bind an Exchange to
+// another Exchange.
+type ExchangeBinding struct {
 	// Required
 	ExchangeName string
 
@@ -117,7 +139,7 @@ type Options struct {
 	// If left empty, server will auto generate queue name
 	QueueName string
 
-	// Bindings is the set of information need to bind a queue to one or
+	// Bindings is the set of information needed to bind a queue to one or
 	// more exchanges, specifying one or more binding (routing) keys.
 	Bindings []Binding
 
@@ -522,7 +544,7 @@ func (r *Rabbit) watchNotifyClose() {
 		for {
 			attempts++
 			if err := r.reconnect(); err != nil {
-				r.log.Warnf("unable to complete reconnect: %s; retrying in %d", err, r.Options.RetryReconnectSec)
+				r.log.Warnf("failed attempt %d to reconnect: %s; retrying in %d", attempts, err, r.Options.RetryReconnectSec)
 				time.Sleep(time.Duration(r.Options.RetryReconnectSec) * time.Second)
 				continue
 			}

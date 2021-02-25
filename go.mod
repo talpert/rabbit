@@ -3,6 +3,7 @@ module github.com/batchcorp/rabbit
 go 1.14
 
 require (
+	github.com/google/uuid v1.2.0
 	github.com/kr/pretty v0.2.0 // indirect
 	github.com/onsi/ginkgo v1.14.1
 	github.com/onsi/gomega v1.10.2
