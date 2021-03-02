@@ -398,7 +398,11 @@ func (r *Rabbit) Consume(ctx context.Context, errChan chan *ConsumeError, f func
 		}
 
 		select {
-		case msg := <-r.delivery():
+		case msg, ok := <-r.delivery():
+			if !ok {
+				r.log.Debug("Delivery chan closed. Not consuming")
+				return nil
+			}
 			if err := f(msg); err != nil {
 				r.log.Debugf("error during consume: %s", err)
 
