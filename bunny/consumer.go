@@ -78,7 +78,7 @@ type consumer struct {
 }
 
 func (b *Bunny) NewConsumerChannel(setupFunc SetupFunc) (*consumer, error) {
-	if b.amqpConn == nil {
+	if b.conn() == nil {
 		return nil, errors.New("no connection! Must call Connect()")
 	}
 
