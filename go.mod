@@ -13,6 +13,7 @@ require (
 	github.com/sirupsen/logrus v1.8.0
 	github.com/streadway/amqp v1.0.0
 	golang.org/x/net v0.0.0-20201021035429-f5854403a974 // indirect
+	golang.org/x/sync v0.0.0-20190423024810-112230192c58
 	golang.org/x/sys v0.0.0-20210124154548-22da62e12c0c // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	google.golang.org/protobuf v1.24.0 // indirect

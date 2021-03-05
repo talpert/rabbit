@@ -188,7 +188,7 @@ func publishMessages() {
 		}
 
 		// publish every few sec
-		time.Sleep(time.Second * 3)
+		time.Sleep(time.Second * 1)
 	}
 }
 

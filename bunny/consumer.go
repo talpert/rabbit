@@ -78,7 +78,7 @@ type consumer struct {
 }
 
 func (b *Bunny) NewConsumerChannel(setupFunc SetupFunc) (*consumer, error) {
-	if b.conn() == nil {
+	if b.connections == nil {
 		return nil, errors.New("no connection! Must call Connect()")
 	}
 
@@ -92,44 +92,16 @@ func (b *Bunny) NewConsumerChannel(setupFunc SetupFunc) (*consumer, error) {
 		id:            id.String(),
 		chanSetupFunc: setupFunc,
 		deliveryMux:   &sync.RWMutex{},
-		rmCallback:    b.deleteConsumer,
 	}
 
 	c.setStatus(statusCreated)
 
-	if err := establishConsumerChan(c, b.conn()); err != nil {
+	if err := b.connections.establishConsumerChan(c); err != nil {
 		return nil, err
 	}
 
-	// append it safely
-	b.consumerMux.Lock()
-	defer b.consumerMux.Unlock()
-	b.consumers[c.id] = c
-
 	log.Debug("new channel created")
 	return c, nil
-}
-
-// A helper to establish the consumer channel. A shared implementation used in connect and reconnect
-func establishConsumerChan(cc *consumer, conn *amqp.Connection) error {
-	log.Debug("establishing a channel...")
-	// establish a channel
-	ch, err := conn.Channel()
-	if err != nil {
-		return fmt.Errorf("failed to initialize channel: %v", err)
-	}
-
-	// This should be safe because we would not be establishing a chan if
-	//  it is in active use
-	cc.amqpChan = ch
-
-	log.Debug("running channel topology setup func...")
-	// run user provided topology setup
-	if err := cc.chanSetupFunc(ch); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // exported version of consume for the user to kick of consumption
@@ -144,6 +116,8 @@ func (c *consumer) Consume(consumeFunc ConsumeFunc, opts ConsumeOptions, errs ch
 	c.consumeFunc = consumeFunc
 	c.opts = &opts
 	c.errorChan = errs
+
+	log.Debugf("Starting consumer %s...", c.id)
 
 	if err := c.consume(); err != nil {
 		return nil, err
@@ -212,19 +186,22 @@ func (c *consumer) consume() error {
 }
 
 // helper wrapper for Consume in the restart case
-func (c *consumer) restart(conn *amqp.Connection) error {
-	if err := establishConsumerChan(c, conn); err != nil {
-		return err
+func (c *consumer) restart() error {
+	log.Debugf("Restarting consumer %s...", c.id)
+
+	if err := c.chanSetupFunc(c.amqpChan); err != nil {
+		return fmt.Errorf("failed to setup channel topology on restart: %v", err)
 	}
 
 	if err := c.consume(); err != nil {
-		return err
+		return fmt.Errorf("failed to begin consuming from channel on restart: %v", err)
 	}
 
 	return nil
 }
 
 func (c *consumer) Cancel(noWait bool) error {
+	// This will trigger a close of the delivery channel and stop the consumer loop as well
 	if err := c.amqpChan.Cancel(c.consumerTag, noWait); err != nil {
 		return err
 	}
