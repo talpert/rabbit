@@ -254,6 +254,15 @@ func (c *connPool) rebalance() {
 	}
 }
 
+func (c *connPool) deleteConnection(id string) {
+	log.Debugf("Removing connection %s from pool...", id)
+
+	c.connPoolMux.Lock()
+	defer c.connPoolMux.Unlock()
+
+	delete(c.conns, id)
+}
+
 /*-----------
 | Consumers |
 -----------*/
@@ -274,7 +283,7 @@ func (c *connPool) establishConsumerChan(consumer *consumer) error {
 	}
 
 	// register the consumer
-	conn.appendConsumer(consumer)
+	conn.registerConsumer(consumer)
 
 	// This should be safe because we would not be establishing a chan if
 	//  it is in active use
@@ -296,7 +305,7 @@ func (c *connection) numConsumers() int {
 	return len(c.consumers)
 }
 
-func (c *connection) appendConsumer(consumer *consumer) {
+func (c *connection) registerConsumer(consumer *consumer) {
 	c.consumerMux.Lock()
 	defer c.consumerMux.Unlock()
 
@@ -304,20 +313,11 @@ func (c *connection) appendConsumer(consumer *consumer) {
 }
 
 func (c *connection) deleteConsumer(id string) {
-	log.Debugf("Removing consumer %s from connection...")
+	log.Debugf("Removing consumer %s from connection...", id)
 	c.consumerMux.Lock()
 	defer c.consumerMux.Unlock()
 
 	delete(c.consumers, id)
-}
-
-func (c *connPool) deleteConnection(id string) {
-	log.Debugf("Removing connection %s from pool...", id)
-
-	c.connPoolMux.Lock()
-	defer c.connPoolMux.Unlock()
-
-	delete(c.conns, id)
 }
 
 /*-----------------
@@ -390,6 +390,7 @@ func (c *connection) reconnect() {
 
 	beginTime := time.Now()
 
+	// TODO: implement exponential backoff
 	for {
 		log.Warnf("Attempting to reconnect. All processing has been blocked for %v", time.Since(beginTime))
 

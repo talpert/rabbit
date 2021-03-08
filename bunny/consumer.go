@@ -163,6 +163,7 @@ func (c *consumer) consume() error {
 	go func() {
 		// TODO: take ctx code from Rabbit lib for cancels
 		for {
+			// TODO: this should not continue to consume if we restarted. Will there be two?
 			item, ok := <-c.deliveries()
 			if !ok {
 				log.Debugf("got delivery channel close! consumer tag: %s", c.consumerTag)
