@@ -54,7 +54,7 @@ func main() {
 		}
 	}()
 
-	if _, err := consumerOne.Consume(workFunc(firstQueue), bunny.ConsumeOptions{
+	if err := consumerOne.Consume(workFunc(firstQueue), bunny.ConsumeOptions{
 		QueueName: firstQueue,
 		AutoAck:   true,
 		Exclusive: false,
@@ -62,7 +62,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if _, err := consumerTwo.Consume(workFunc(secondQueue), bunny.ConsumeOptions{
+	if err := consumerTwo.Consume(workFunc(secondQueue), bunny.ConsumeOptions{
 		QueueName: secondQueue,
 		AutoAck:   true,
 		Exclusive: false,
@@ -81,7 +81,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if _, err := consumerThree.Consume(workFunc(thirdQueue), bunny.ConsumeOptions{
+	if err := consumerThree.Consume(workFunc(thirdQueue), bunny.ConsumeOptions{
 		QueueName: thirdQueue,
 		AutoAck:   true,
 		Exclusive: false,

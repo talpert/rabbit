@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	maxChannelsPerConnection = 1
+	maxChannelsPerConnection = 1500
 	rebalanceInterval        = time.Minute * 5
 )
 
@@ -26,7 +26,7 @@ type connPool struct {
 	currentID string
 	// locked during conn creation process to avoid other threads
 	//  from creating more connections
-	connPoolMux *sync.Mutex
+	connPoolMux sync.Locker
 
 	// these are used when creating new connections
 	details     *ConnectionDetails
@@ -34,15 +34,16 @@ type connPool struct {
 }
 
 type connection struct {
-	id          string
-	amqpConn    *amqp.Connection
+	id string
+	// amqp connection wrapped in our interface to allow dependency injection
+	amqpConn    amqpConnection
 	details     *ConnectionDetails
 	topologyDef SetupFunc
 	// locked when connection is busy and it should not be used
 	connMux *sync.Mutex
 
 	consumers   map[string]*consumer
-	consumerMux *sync.RWMutex
+	consumerMux rwLocker
 
 	// TODO producers
 
@@ -83,7 +84,7 @@ func (c *connPool) declareInitialTopology(setup SetupFunc) error {
 
 	conn, err := c.getNext()
 	if err != nil {
-		return fmt.Errorf("error declaring initial topology: %v", err)
+		return fmt.Errorf("failed to obtain connection for declaring initial topology: %v", err)
 	}
 
 	conn.topologyDef = setup
@@ -99,16 +100,28 @@ func (c *connPool) declareInitialTopology(setup SetupFunc) error {
 func (c *connection) declareTopology() error {
 	ch, err := c.amqpConn.Channel()
 	if err != nil {
-		return fmt.Errorf("failed to create channel to define topology: %v", err)
+		return fmt.Errorf("failed to create channcel to define topology: %v", err)
 	}
+
+	// always try to close this, even if there is an error
+	defer func() {
+		// if the original amqp connection was mocked, then break out of this and
+		//  skip closing the channel. This is super gross but the stupid amqp lib
+		//  does not offer a clean way to mock any of its parts so resorting to this
+		// TODO: figure out a way to avoid this kind of thing
+		_, ok := c.amqpConn.(*amqp.Connection)
+		if !ok {
+			return
+		}
+
+		if err := ch.Close(); err != nil {
+			// log this but allow execution to continue
+			log.Errorf("failed to close channel for topology declaration: %v", err)
+		}
+	}()
 
 	if err := c.topologyDef(ch); err != nil {
 		return err
-	}
-
-	if err := ch.Close(); err != nil {
-		// log this but allow execution to continue
-		log.Errorf("failed to close channel for topology declaration: %v", err)
 	}
 
 	return nil
@@ -151,6 +164,10 @@ func (c *connection) connect() error {
 
 	log.Debugf("dialing rabbit... %d urls to try", len(c.details.URLs))
 
+	if len(c.details.URLs) < 1 {
+		return errors.New("no AMQP URLs were supplied")
+	}
+
 	for i, url := range c.details.URLs {
 		if c.details.UseTLS {
 			log.Debugf("Dialling url %d using TLS... verify certificate: %v", i, !c.details.SkipVerifyTLS)
@@ -160,10 +177,10 @@ func (c *connection) connect() error {
 				tlsConfig.InsecureSkipVerify = true
 			}
 
-			amqpConn, err = amqp.DialTLS(url, tlsConfig)
+			amqpConn, err = c.details.dialer.DialTLS(url, tlsConfig)
 		} else {
 			log.Debugf("Dialling url %d without TLS...", i)
-			amqpConn, err = amqp.Dial(url)
+			amqpConn, err = c.details.dialer.Dial(url)
 		}
 
 		if err == nil {
@@ -177,7 +194,7 @@ func (c *connection) connect() error {
 		return fmt.Errorf("failed to connect to all URLs. Last error: %v", err)
 	}
 
-	// save the connection
+	// save the connection. wrap it in our interface to allow dependency injection
 	c.amqpConn = amqpConn
 
 	// Watch for closed connection
@@ -203,11 +220,11 @@ func (c *connPool) getNext() (*connection, error) {
 
 	// check that this connection exists and see that there is capacity on it
 	// TODO: implement producers
-	if ok && con.numConsumers() < maxChannelsPerConnection {
+	if ok && con.numConsumers() < c.details.maxChannelsPerConnection {
 		return con, nil
 	}
 
-	log.Debugf("reached max number of channels per connection: %d, starting new...", maxChannelsPerConnection)
+	log.Debugf("reached max number of channels per connection: %d, starting new...", c.details.maxChannelsPerConnection)
 
 	// safe to create here because we still have the lock
 	newCon, err := c.newConnection()
@@ -293,7 +310,7 @@ func (c *connPool) establishConsumerChan(consumer *consumer) error {
 	log.Debug("running channel topology setup func...")
 	// run user provided topology setup
 	if err := consumer.chanSetupFunc(ch); err != nil {
-		return err
+		return fmt.Errorf("failed to setup channel with provided func: %v", err)
 	}
 
 	return nil
@@ -458,4 +475,54 @@ func (c *connection) restartConsumers() error {
 	}
 
 	return nil
+}
+
+/*-------------------
+| Helper Interfaces |
+-------------------*/
+
+//go:generate counterfeiter -o fakes/fake_dialer.go . dialer
+
+// provide an interface that allows for mocking the connection
+type dialer interface {
+	Dial(url string) (*amqp.Connection, error)
+	DialTLS(url string, amqps *tls.Config) (*amqp.Connection, error)
+}
+
+type amqpDialer struct{}
+
+func (d *amqpDialer) Dial(url string) (*amqp.Connection, error) {
+	return amqp.Dial(url)
+}
+
+func (d *amqpDialer) DialTLS(url string, amqps *tls.Config) (*amqp.Connection, error) {
+	return amqp.DialTLS(url, amqps)
+}
+
+//go:generate counterfeiter -o fakes/fake_amqpConnection.go . amqpConnection
+
+// an interface of the amqp.Connection methods that we use, so it can be mocked
+type amqpConnection interface {
+	NotifyClose(receiver chan *amqp.Error) chan *amqp.Error
+	Close() error
+	Channel() (*amqp.Channel, error)
+}
+
+//go:generate counterfeiter -o fakes/fake_amqpChannel.go . amqpChannel
+
+// an interface of the amqp.Channel methods that we use, so it can be mocked
+type amqpChannel interface {
+	Close() error
+	Cancel(consumer string, noWait bool) error
+	Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error)
+}
+
+//go:generate counterfeiter -o fakes/fake_rwLocker.go . rwLocker
+//go:generate counterfeiter -o fakes/fake_locker.go sync.Locker
+
+type rwLocker interface {
+	RLock()
+	RUnlock()
+	Lock()
+	Unlock()
 }

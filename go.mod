@@ -11,6 +11,7 @@ require (
 	github.com/relistan/go-director v0.0.0-20200406104025-dbbf5d95248d
 	github.com/satori/go.uuid v1.2.0
 	github.com/sirupsen/logrus v1.8.0
+	github.com/smartystreets/goconvey v1.6.4
 	github.com/streadway/amqp v1.0.0
 	golang.org/x/net v0.0.0-20201021035429-f5854403a974 // indirect
 	golang.org/x/sync v0.0.0-20190423024810-112230192c58

@@ -19,11 +19,17 @@ func SeLogger(logger rabbit.Logger) {
 	log = logger
 }
 
-type Bunny struct {
+type Bunny interface {
+	Connect() error
+	DeclareTopology(setup SetupFunc) error
+	NewConsumerChannel(setupFunc SetupFunc) (Consumer, error)
+}
+
+type bunny struct {
 	connDetails *ConnectionDetails
 	// Naive bool to track if connect has been called. This prevents a user from
 	//  calling connect more than once but does not guarantee connection status
-	connectCalled bool
+	connected bool
 
 	connections *connPool
 
@@ -45,19 +51,29 @@ type ConnectionDetails struct {
 
 	// Skip cert verification (only applies if UseTLS is true)
 	SkipVerifyTLS bool
+
+	maxChannelsPerConnection int
+
+	// a mock-able interface that wraps amqp dial functions
+	dialer dialer
 }
 
 // Used to declare topology of rabbit via use of amqp functions
 type SetupFunc func(ch *amqp.Channel) error
 
-func NewBunny(details ConnectionDetails) *Bunny {
-	return &Bunny{
+func NewBunny(details ConnectionDetails) *bunny {
+	// use the real dialer
+	details.dialer = &amqpDialer{}
+	// set this to default for now, but could make it configurable in the future
+	details.maxChannelsPerConnection = maxChannelsPerConnection
+
+	return &bunny{
 		connDetails: &details,
 	}
 }
 
-func (b *Bunny) Connect() error {
-	if b.connectCalled {
+func (b *bunny) Connect() error {
+	if b.connected {
 		return errors.New("connect may only be called once")
 	}
 
@@ -69,6 +85,7 @@ func (b *Bunny) Connect() error {
 	}
 
 	b.connections = pool
+	b.connected = true
 
 	log.Info("Connection established")
 
@@ -77,6 +94,6 @@ func (b *Bunny) Connect() error {
 
 // A one time declaration of overall rabbit topology to start
 // Very important that this is idempotent. It will get called on restarts
-func (b *Bunny) DeclareTopology(setup SetupFunc) error {
+func (b *bunny) DeclareTopology(setup SetupFunc) error {
 	return b.connections.declareInitialTopology(setup)
 }

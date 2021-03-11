@@ -11,6 +11,7 @@ import (
 )
 
 type Consumer interface {
+	Consume(consumeFunc ConsumeFunc, opts ConsumeOptions, errs chan<- error) error
 	Cancel(noWait bool) error
 }
 
@@ -66,7 +67,7 @@ func (c *consumer) getStatus() status {
 type consumer struct {
 	id            string
 	status        *status
-	amqpChan      *amqp.Channel
+	amqpChan      amqpChannel
 	chanSetupFunc SetupFunc
 	consumeFunc   ConsumeFunc
 	consumerTag   string
@@ -77,7 +78,7 @@ type consumer struct {
 	rmCallback    func(string)
 }
 
-func (b *Bunny) NewConsumerChannel(setupFunc SetupFunc) (*consumer, error) {
+func (b *bunny) NewConsumerChannel(setupFunc SetupFunc) (Consumer, error) {
 	if b.connections == nil {
 		return nil, errors.New("no connection! Must call Connect()")
 	}
@@ -105,12 +106,12 @@ func (b *Bunny) NewConsumerChannel(setupFunc SetupFunc) (*consumer, error) {
 }
 
 // exported version of consume for the user to kick of consumption
-func (c *consumer) Consume(consumeFunc ConsumeFunc, opts ConsumeOptions, errs chan<- error) (Consumer, error) {
+func (c *consumer) Consume(consumeFunc ConsumeFunc, opts ConsumeOptions, errs chan<- error) error {
 	// Enforce one consumer per channel, and also prevent consuming on cancelled
 	//  This also prevents reuse of cancelled consumers to avoid any unexpected issues
 	//  which may be hard to debug
 	if c.getStatus() != statusCreated {
-		return nil, fmt.Errorf("Consume() can not be called on consumer in %q state", c.status)
+		return fmt.Errorf("Consume() can not be called on consumer in %q state", c.status)
 	}
 
 	c.consumeFunc = consumeFunc
@@ -120,10 +121,10 @@ func (c *consumer) Consume(consumeFunc ConsumeFunc, opts ConsumeOptions, errs ch
 	log.Debugf("Starting consumer %s...", c.id)
 
 	if err := c.consume(); err != nil {
-		return nil, err
+		return err
 	}
 
-	return c, nil
+	return nil
 }
 
 // internal consume that is reusable for restarts
@@ -190,8 +191,15 @@ func (c *consumer) consume() error {
 func (c *consumer) restart() error {
 	log.Debugf("Restarting consumer %s...", c.id)
 
-	if err := c.chanSetupFunc(c.amqpChan); err != nil {
-		return fmt.Errorf("failed to setup channel topology on restart: %v", err)
+	ch, ok := c.amqpChan.(*amqp.Channel)
+	// If this is a real amqp.Channel, then execute the setup func
+	// In tests, this will not be a real Channel. That's gross, but do this for now so
+	//  we can get this working. Long term maybe add a "getChannel" to the interface and
+	//  mock that to return an empty channel struct
+	if ok {
+		if err := c.chanSetupFunc(ch); err != nil {
+			return fmt.Errorf("failed to setup channel topology on restart: %v", err)
+		}
 	}
 
 	if err := c.consume(); err != nil {
