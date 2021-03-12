@@ -30,9 +30,10 @@ func (fake *FakeRwLocker) Lock() {
 	fake.lockMutex.Lock()
 	fake.lockArgsForCall = append(fake.lockArgsForCall, struct {
 	}{})
+	stub := fake.LockStub
 	fake.recordInvocation("Lock", []interface{}{})
 	fake.lockMutex.Unlock()
-	if fake.LockStub != nil {
+	if stub != nil {
 		fake.LockStub()
 	}
 }
@@ -53,9 +54,10 @@ func (fake *FakeRwLocker) RLock() {
 	fake.rLockMutex.Lock()
 	fake.rLockArgsForCall = append(fake.rLockArgsForCall, struct {
 	}{})
+	stub := fake.RLockStub
 	fake.recordInvocation("RLock", []interface{}{})
 	fake.rLockMutex.Unlock()
-	if fake.RLockStub != nil {
+	if stub != nil {
 		fake.RLockStub()
 	}
 }
@@ -76,9 +78,10 @@ func (fake *FakeRwLocker) RUnlock() {
 	fake.rUnlockMutex.Lock()
 	fake.rUnlockArgsForCall = append(fake.rUnlockArgsForCall, struct {
 	}{})
+	stub := fake.RUnlockStub
 	fake.recordInvocation("RUnlock", []interface{}{})
 	fake.rUnlockMutex.Unlock()
-	if fake.RUnlockStub != nil {
+	if stub != nil {
 		fake.RUnlockStub()
 	}
 }
@@ -99,9 +102,10 @@ func (fake *FakeRwLocker) Unlock() {
 	fake.unlockMutex.Lock()
 	fake.unlockArgsForCall = append(fake.unlockArgsForCall, struct {
 	}{})
+	stub := fake.UnlockStub
 	fake.recordInvocation("Unlock", []interface{}{})
 	fake.unlockMutex.Unlock()
-	if fake.UnlockStub != nil {
+	if stub != nil {
 		fake.UnlockStub()
 	}
 }

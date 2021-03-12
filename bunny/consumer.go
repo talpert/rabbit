@@ -47,23 +47,6 @@ func (s status) String() string {
 	}
 }
 
-func (c *consumer) setStatus(st status) {
-	if c.status == nil {
-		c.status = &st
-		return
-	}
-
-	atomic.StoreUint32((*uint32)(c.status), uint32(st))
-}
-
-func (c *consumer) getStatus() status {
-	if c.status == nil {
-		return statusCreated // default
-	}
-
-	return status(atomic.LoadUint32((*uint32)(c.status)))
-}
-
 type consumer struct {
 	id            string
 	status        *status
@@ -165,6 +148,7 @@ func (c *consumer) consume() error {
 		// TODO: take ctx code from Rabbit lib for cancels
 		for {
 			// TODO: this should not continue to consume if we restarted. Will there be two?
+			//  should use a select here and have a close/cancel chan as well
 			item, ok := <-c.deliveries()
 			if !ok {
 				log.Debugf("got delivery channel close! consumer tag: %s", c.consumerTag)
@@ -183,28 +167,6 @@ func (c *consumer) consume() error {
 	}()
 
 	log.Debugf("consuming from queue %s with consumer tag %s", c.opts.QueueName, c.consumerTag)
-
-	return nil
-}
-
-// helper wrapper for Consume in the restart case
-func (c *consumer) restart() error {
-	log.Debugf("Restarting consumer %s...", c.id)
-
-	ch, ok := c.amqpChan.(*amqp.Channel)
-	// If this is a real amqp.Channel, then execute the setup func
-	// In tests, this will not be a real Channel. That's gross, but do this for now so
-	//  we can get this working. Long term maybe add a "getChannel" to the interface and
-	//  mock that to return an empty channel struct
-	if ok {
-		if err := c.chanSetupFunc(ch); err != nil {
-			return fmt.Errorf("failed to setup channel topology on restart: %v", err)
-		}
-	}
-
-	if err := c.consume(); err != nil {
-		return fmt.Errorf("failed to begin consuming from channel on restart: %v", err)
-	}
 
 	return nil
 }
@@ -228,8 +190,64 @@ func (c *consumer) Cancel(noWait bool) error {
 	return nil
 }
 
+// helper wrapper for Consume in the restart case
+func (c *consumer) restart(ch amqpChannel) error {
+	log.Debugf("Restarting consumer %s...", c.id)
+
+	// TODO: first kill the previous consumer to make sure that we do not leave it dangling
+
+	ach, ok := ch.(*amqp.Channel)
+	// If this is a real amqp.Channel, then execute the setup func
+	// In tests, this will not be a real Channel. That's gross, but do this for now so
+	//  we can get this working. Long term maybe add a "getChannel" to the interface and
+	//  mock that to return an empty channel struct
+	if ok {
+		if err := c.chanSetupFunc(ach); err != nil {
+			return fmt.Errorf("failed to setup channel topology on restart: %v", err)
+		}
+	}
+
+	if err := c.consume(); err != nil {
+		return fmt.Errorf("failed to begin consuming from channel on restart: %v", err)
+	}
+
+	return nil
+}
+
+func (c *consumer) setStatus(st status) {
+	if c.status == nil {
+		c.status = &st
+		return
+	}
+
+	atomic.StoreUint32((*uint32)(c.status), uint32(st))
+}
+
+func (c *consumer) getStatus() status {
+	if c.status == nil {
+		return statusCreated // default
+	}
+
+	return status(atomic.LoadUint32((*uint32)(c.status)))
+}
+
+func (c *consumer) getID() string {
+	return c.id
+}
+
 func (c *consumer) deliveries() <-chan amqp.Delivery {
 	c.deliveryMux.RLock()
 	defer c.deliveryMux.RUnlock()
 	return c.deliveryChan
+}
+
+// see comment on dialer fake generation
+// //go:generate counterfeiter -o restartableConsumer_test.go . restartableConsumer
+
+// restartableConsumer interface is used by the connection and allows for mocking
+//  of the consumer functionality in tests
+type restartableConsumer interface {
+	restart(ch amqpChannel) error
+	getID() string
+	getStatus() status
 }

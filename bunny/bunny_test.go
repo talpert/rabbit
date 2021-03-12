@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/batchcorp/rabbit/bunny/fakes"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/streadway/amqp"
 )
@@ -31,7 +30,7 @@ func TestConnect(t *testing.T) {
 			URLs: []string{"foobar"},
 		})
 
-		fakeDialer := &fakes.FakeDialer{}
+		fakeDialer := &fakeDialer{}
 		bunn.connDetails.dialer = fakeDialer
 
 		fakeDialer.DialReturns(&amqp.Connection{}, nil)

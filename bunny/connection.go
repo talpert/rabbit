@@ -40,9 +40,9 @@ type connection struct {
 	details     *ConnectionDetails
 	topologyDef SetupFunc
 	// locked when connection is busy and it should not be used
-	connMux *sync.Mutex
+	connMux sync.Locker
 
-	consumers   map[string]*consumer
+	consumers   map[string]restartableConsumer
 	consumerMux rwLocker
 
 	// TODO producers
@@ -141,7 +141,7 @@ func (c *connPool) newConnection() (*connection, error) {
 		topologyDef: c.topologyDef,
 		connMux:     &sync.Mutex{},
 
-		consumers:   map[string]*consumer{},
+		consumers:   map[string]restartableConsumer{},
 		consumerMux: &sync.RWMutex{},
 
 		rmCallback: c.deleteConnection,
@@ -159,7 +159,7 @@ func (c *connPool) newConnection() (*connection, error) {
 }
 
 func (c *connection) connect() error {
-	var amqpConn *amqp.Connection
+	var amqpConn amqpConnection
 	var err error
 
 	log.Debugf("dialing rabbit... %d urls to try", len(c.details.URLs))
@@ -348,13 +348,15 @@ func (c *connection) watchNotifyClose() {
 
 	// watch for close notification, reconnect, repeat
 	closeErr := <-c.notifyClose
-	log.Debugf("received message on notify close channel: '%+v' (reconnecting)", closeErr)
+	log.Debugf("received message on notify close channel: %+v", closeErr)
 	log.Warnf("Detected connection close after %v. Reconnecting...", time.Since(watchBeginTime))
 
 	// this will block until connection is established and restart is complete
 	c.restart()
 }
 
+// restart will reestablish a connection and restart all the components of the
+//  connection that were previously running
 func (c *connection) restart() {
 	// first reconnect
 	reconnectBeginTime := time.Now()
@@ -435,10 +437,10 @@ func (c *connection) restartConsumers() error {
 
 	// TODO: implement some kind of rate limiting. Maybe something global, not just restarts
 	for _, consumer := range c.consumers {
-		// Do not restart channels that have been cancelled. This avoids a race condition where
+		// Do not restart consumers that have been cancelled. This avoids a race condition where
 		//  the consumer ended but had not been deleted before a restart was triggered.
 		if consumer.getStatus() == statusCancelled {
-			log.Debugf("Consumer %s is cancelled so not restarting", consumer.id)
+			log.Debugf("Consumer %s is cancelled so not restarting", consumer.getID())
 			continue
 		}
 
@@ -450,11 +452,8 @@ func (c *connection) restartConsumers() error {
 			errs = append(errs, err.Error())
 		}
 
-		// set new channel
-		consumer.amqpChan = ch
-
-		if err := consumer.restart(); err != nil {
-			log.Errorf("Failed to restart consumer %s: %v", consumer.id, err)
+		if err := consumer.restart(ch); err != nil {
+			log.Errorf("Failed to restart consumer %s: %v", consumer.getID(), err)
 
 			// need to close the channel we created for this consumer
 			if err := ch.Close(); err != nil {
@@ -481,21 +480,27 @@ func (c *connection) restartConsumers() error {
 | Helper Interfaces |
 -------------------*/
 
-//go:generate counterfeiter -o fakes/fake_dialer.go . dialer
+// do not like that this fake is generated into the same dir, but need to make
+//  an exception here to make this work. The alternative is to make the amqpConnection
+//  interface exported, but that is definitely not something that we want.
+//  Also note that this fake gets generated with the package name (ie bunny.amqpConnection)
+//  so you will need to find and replace to fix. That also sucks and seems like a bug in
+//  counterfeiter. TODO: Revisit this to see if it can be done better
+// //go:generate counterfeiter -o dialer_test.go . dialer
 
 // provide an interface that allows for mocking the connection
 type dialer interface {
-	Dial(url string) (*amqp.Connection, error)
-	DialTLS(url string, amqps *tls.Config) (*amqp.Connection, error)
+	Dial(url string) (amqpConnection, error)
+	DialTLS(url string, amqps *tls.Config) (amqpConnection, error)
 }
 
 type amqpDialer struct{}
 
-func (d *amqpDialer) Dial(url string) (*amqp.Connection, error) {
+func (d *amqpDialer) Dial(url string) (amqpConnection, error) {
 	return amqp.Dial(url)
 }
 
-func (d *amqpDialer) DialTLS(url string, amqps *tls.Config) (*amqp.Connection, error) {
+func (d *amqpDialer) DialTLS(url string, amqps *tls.Config) (amqpConnection, error) {
 	return amqp.DialTLS(url, amqps)
 }
 

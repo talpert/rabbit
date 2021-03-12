@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/streadway/amqp"
@@ -18,7 +19,7 @@ import (
 
 func Test_newPool(t *testing.T) {
 	Convey("newPool", t, func() {
-		fakeDialer := &fakes.FakeDialer{}
+		fakeDialer := &fakeDialer{}
 		fakeDialer.DialReturns(&amqp.Connection{}, nil)
 
 		cd := &ConnectionDetails{
@@ -54,7 +55,7 @@ func Test_newPool(t *testing.T) {
 
 func Test_connPool_declareInitialTopology(t *testing.T) {
 	Convey("declareInitialTopology", t, func() {
-		fakeDialer := &fakes.FakeDialer{}
+		fakeDialer := &fakeDialer{}
 		fakeDialer.DialReturns(&amqp.Connection{}, nil)
 
 		cd := &ConnectionDetails{
@@ -112,7 +113,7 @@ func Test_connPool_declareInitialTopology(t *testing.T) {
 
 func Test_connPool_newConnection(t *testing.T) {
 	Convey("newConnection", t, func() {
-		fakeDialer := &fakes.FakeDialer{}
+		fakeDialer := &fakeDialer{}
 		fakeDialer.DialReturns(&amqp.Connection{}, nil)
 
 		cd := &ConnectionDetails{
@@ -153,7 +154,7 @@ func Test_connPool_newConnection(t *testing.T) {
 
 func Test_connPool_getNext(t *testing.T) {
 	Convey("getNext()", t, func() {
-		fakeDialer := &fakes.FakeDialer{}
+		fakeDialer := &fakeDialer{}
 		fakeDialer.DialReturns(&amqp.Connection{}, nil)
 
 		cd := &ConnectionDetails{
@@ -233,7 +234,7 @@ func Test_connPool_getNext(t *testing.T) {
 
 func Test_connPool_establishConsumerChan(t *testing.T) {
 	Convey("establishConsumerChan", t, func() {
-		fakeDialer := &fakes.FakeDialer{}
+		fakeDialer := &fakeDialer{}
 		fakeDialer.DialReturns(&amqp.Connection{}, nil)
 
 		cd := &ConnectionDetails{
@@ -345,7 +346,7 @@ func Test_connPool_deleteConnection(t *testing.T) {
 
 func Test_connection_connect(t *testing.T) {
 	Convey("connect", t, func() {
-		fakeDialer := &fakes.FakeDialer{}
+		fakeDialer := &fakeDialer{}
 		fakeDialer.DialReturns(&amqp.Connection{}, nil)
 
 		connDetails := &ConnectionDetails{
@@ -479,7 +480,7 @@ func Test_connection_consumerHelpers(t *testing.T) {
 		}
 
 		Convey("numConsumers returns the number and locks mutex", func() {
-			conn.consumers = map[string]*consumer{"foo": {}, "bar": {}}
+			conn.consumers = map[string]restartableConsumer{"foo": &consumer{}, "bar": &consumer{}}
 			n := conn.numConsumers()
 			So(n, ShouldEqual, 2)
 			So(fakeRWLocker.RLockCallCount(), ShouldEqual, 1)
@@ -487,7 +488,7 @@ func Test_connection_consumerHelpers(t *testing.T) {
 		})
 
 		Convey("registerConsumers appends the consumer and locks mutex", func() {
-			conn.consumers = map[string]*consumer{}
+			conn.consumers = map[string]restartableConsumer{}
 			consumerID := "foobar"
 			cons := &consumer{id: consumerID}
 
@@ -501,7 +502,7 @@ func Test_connection_consumerHelpers(t *testing.T) {
 
 		Convey("deleteConsumer deletes and locks mutex", func() {
 			consumerID := "foo"
-			conn.consumers = map[string]*consumer{consumerID: {}, "bar": {}}
+			conn.consumers = map[string]restartableConsumer{consumerID: &consumer{}, "bar": &consumer{}}
 
 			conn.deleteConsumer(consumerID)
 			So(len(conn.consumers), ShouldEqual, 1)
@@ -511,6 +512,228 @@ func Test_connection_consumerHelpers(t *testing.T) {
 		})
 	})
 }
+
+/*----------
+| Restarts |
+----------*/
+
+func Test_connection_watchNotifyClose(t *testing.T) {
+	Convey("watchNotifyClose", t, func() {
+		fakeDialer := &fakeDialer{}
+		fakeDialer.DialReturns(&amqp.Connection{}, nil)
+
+		connDetails := &ConnectionDetails{
+			URLs:                     []string{"foobar"},
+			dialer:                   fakeDialer,
+			maxChannelsPerConnection: maxChannelsPerConnection,
+		}
+
+		closeChan := make(chan *amqp.Error)
+		fakeRWMux := &fakes.FakeRwLocker{}
+		conn := &connection{
+			details:     connDetails,
+			notifyClose: closeChan,
+			consumerMux: fakeRWMux,
+			rmCallback:  func(string) {},
+		}
+
+		Convey("reacts to a message on notifyClose channel", func() {
+			// because this connection has no consumers, it will not restart itself
+			// this behavior is desirable for this test as it allows us to confirm
+			//  that restart was called, but we do not have to go through (and mock)
+			//  the restart process
+			conn.consumers = map[string]restartableConsumer{}
+
+			// this is used as a way to see that the callback was called
+			rmCalled := false
+			conn.rmCallback = func(string) { rmCalled = true }
+
+			finished := false
+			go func() {
+				conn.watchNotifyClose()
+				finished = true // signifies that watchNotifyClose returned
+			}()
+
+			closeChan <- &amqp.Error{}
+
+			time.Sleep(time.Millisecond * 5)
+			So(rmCalled, ShouldBeTrue) // restart was called
+			So(finished, ShouldBeTrue) // watchNotifyClose returned
+		})
+
+		Convey("restarts if notifyClose channel is closed before anything is sent", func() {
+			finished := false
+			go func() {
+				conn.watchNotifyClose()
+				finished = true // signifies that watchNotifyClose returned
+			}()
+
+			close(closeChan)
+
+			time.Sleep(time.Millisecond * 5)
+			So(finished, ShouldBeTrue)
+		})
+	})
+}
+
+func Test_connection_restart(t *testing.T) {
+	Convey("restart", t, func() {
+		fakeDialer := &fakeDialer{}
+		fakeConnection := &fakes.FakeAmqpConnection{}
+		fakeDialer.DialReturns(fakeConnection, nil)
+		fakeConnection.ChannelReturns(&amqp.Channel{}, nil)
+
+		connDetails := &ConnectionDetails{
+			URLs:                     []string{"foobar"},
+			dialer:                   fakeDialer,
+			maxChannelsPerConnection: maxChannelsPerConnection,
+		}
+
+		closeChan := make(chan *amqp.Error)
+		fakeRWMux := &fakes.FakeRwLocker{}
+		fakeMux := &fakes.FakeLocker{}
+		fakeConsumer := &fakeRestartableConsumer{}
+		conn := &connection{
+			details:     connDetails,
+			notifyClose: closeChan,
+			connMux:     fakeMux,
+			consumers:   map[string]restartableConsumer{"foo": fakeConsumer},
+			consumerMux: fakeRWMux,
+			rmCallback:  func(string) {},
+		}
+
+		Convey("restarts the connection", func() {
+			conn.restart()
+			So(fakeDialer.DialCallCount(), ShouldEqual, 1)
+			// TODO: grab successful log message here
+		})
+
+		Convey("if there are no consumers, it does not restart", func() {
+			conn.consumers = map[string]restartableConsumer{}
+			rmCalled := false
+			conn.rmCallback = func(string) { rmCalled = true }
+
+			conn.restart()
+			So(fakeDialer.DialCallCount(), ShouldEqual, 0)
+			// removes itself from the pool
+			So(rmCalled, ShouldBeTrue)
+		})
+
+		Convey("redeclares topology if defined", func() {
+			fakeAMQPConn := &fakes.FakeAmqpConnection{}
+			fakeAMQPConn.ChannelReturns(&amqp.Channel{}, nil)
+			fakeDialer.DialReturns(fakeAMQPConn, nil)
+			conn.amqpConn = fakeAMQPConn
+			topologyCalled := false
+			conn.topologyDef = func(ch *amqp.Channel) error { topologyCalled = true; return nil }
+
+			conn.restart()
+			So(topologyCalled, ShouldBeTrue)
+		})
+
+		Convey("restarts the consumers", func() {
+			restartCalled := false
+			fakeConsumer.restartStub = func(ch amqpChannel) error { restartCalled = true; return nil }
+			conn.restart()
+			// maybe consumer needs to be an interface so we can stick a mocked on in there
+			So(fakeRWMux.LockCallCount(), ShouldEqual, 1)
+			So(fakeRWMux.UnlockCallCount(), ShouldEqual, 1)
+			So(restartCalled, ShouldBeTrue)
+		})
+	})
+}
+
+func Test_connection_reconnect(t *testing.T) {
+	Convey("reconnect", t, func() {
+		fakeDialer := &fakeDialer{}
+		fakeDialer.DialReturns(&amqp.Connection{}, nil)
+
+		connDetails := &ConnectionDetails{
+			URLs:                     []string{"foobar"},
+			dialer:                   fakeDialer,
+			maxChannelsPerConnection: maxChannelsPerConnection,
+		}
+
+		closeChan := make(chan *amqp.Error)
+		fakeMux := &fakes.FakeLocker{}
+		conn := &connection{
+			details:     connDetails,
+			notifyClose: closeChan,
+			connMux:     fakeMux,
+		}
+
+		Convey("reconnects to rabbit if first try is successful", func() {
+			conn.reconnect()
+			// mutex is locked
+			So(fakeMux.LockCallCount(), ShouldEqual, 1)
+			So(fakeMux.UnlockCallCount(), ShouldEqual, 1)
+			So(fakeDialer.DialCallCount(), ShouldEqual, 1)
+		})
+
+		Convey("will retry connection until successful", func() {
+			n := 25
+			fakeDialer.DialReturns(nil, errors.New("dial failure"))
+			fakeDialer.DialReturnsOnCall(n, &amqp.Connection{}, nil)
+
+			conn.reconnect()
+			So(fakeDialer.DialCallCount(), ShouldEqual, n+1)
+		})
+	})
+}
+
+func Test_connection_restartConsumers(t *testing.T) {
+	Convey("restartConsumers", t, func() {
+		fakeConnection := &fakes.FakeAmqpConnection{}
+		fakeConnection.ChannelReturns(&amqp.Channel{}, nil)
+		closeChan := make(chan *amqp.Error)
+		fakeRWMux := &fakes.FakeRwLocker{}
+		fakeMux := &fakes.FakeLocker{}
+		fakeConsumer := &fakeRestartableConsumer{}
+		conn := &connection{
+			amqpConn:    fakeConnection,
+			notifyClose: closeChan,
+			connMux:     fakeMux,
+			// a single consumer with status cancelled will allow the function
+			//  under test to execute, but it will not actually try to restart and error
+			consumers:   map[string]restartableConsumer{"foo": fakeConsumer},
+			consumerMux: fakeRWMux,
+			rmCallback:  func(string) {},
+		}
+
+		Convey("restarts the consumers", func() {
+			fakeConsumer2 := &fakeRestartableConsumer{}
+			conn.consumers["bar"] = fakeConsumer2
+
+			err := conn.restartConsumers()
+			So(err, ShouldBeNil)
+			So(fakeRWMux.LockCallCount(), ShouldEqual, 1)
+			So(fakeRWMux.UnlockCallCount(), ShouldEqual, 1)
+			So(fakeConsumer.RestartCallCount(), ShouldEqual, 1)
+			So(fakeConsumer2.RestartCallCount(), ShouldEqual, 1)
+		})
+
+		Convey("skips consumers that have been cancelled", func() {
+			fakeStatus := statusCancelled
+			fakeConsumer.GetStatusReturns(fakeStatus)
+			err := conn.restartConsumers()
+			So(err, ShouldBeNil)
+			So(fakeConsumer.GetStatusCallCount(), ShouldEqual, 1)
+			So(fakeConsumer.RestartCallCount(), ShouldEqual, 0)
+		})
+
+		Convey("errors if channel creation fails", func() {
+
+		})
+
+		Convey("errors if consumer restart fails", func() {
+
+		})
+	})
+}
+
+/*----------
+| Wrappers |
+----------*/
 
 func TestWrappers(t *testing.T) {
 	Convey("the structs meet our wrapper interfaces ", t, func() {

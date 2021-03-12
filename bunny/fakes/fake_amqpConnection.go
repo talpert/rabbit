@@ -50,15 +50,16 @@ func (fake *FakeAmqpConnection) Channel() (*amqp.Channel, error) {
 	ret, specificReturn := fake.channelReturnsOnCall[len(fake.channelArgsForCall)]
 	fake.channelArgsForCall = append(fake.channelArgsForCall, struct {
 	}{})
+	stub := fake.ChannelStub
+	fakeReturns := fake.channelReturns
 	fake.recordInvocation("Channel", []interface{}{})
 	fake.channelMutex.Unlock()
-	if fake.ChannelStub != nil {
-		return fake.ChannelStub()
+	if stub != nil {
+		return stub()
 	}
 	if specificReturn {
 		return ret.result1, ret.result2
 	}
-	fakeReturns := fake.channelReturns
 	return fakeReturns.result1, fakeReturns.result2
 }
 
@@ -105,15 +106,16 @@ func (fake *FakeAmqpConnection) Close() error {
 	ret, specificReturn := fake.closeReturnsOnCall[len(fake.closeArgsForCall)]
 	fake.closeArgsForCall = append(fake.closeArgsForCall, struct {
 	}{})
+	stub := fake.CloseStub
+	fakeReturns := fake.closeReturns
 	fake.recordInvocation("Close", []interface{}{})
 	fake.closeMutex.Unlock()
-	if fake.CloseStub != nil {
-		return fake.CloseStub()
+	if stub != nil {
+		return stub()
 	}
 	if specificReturn {
 		return ret.result1
 	}
-	fakeReturns := fake.closeReturns
 	return fakeReturns.result1
 }
 
@@ -158,15 +160,16 @@ func (fake *FakeAmqpConnection) NotifyClose(arg1 chan *amqp.Error) chan *amqp.Er
 	fake.notifyCloseArgsForCall = append(fake.notifyCloseArgsForCall, struct {
 		arg1 chan *amqp.Error
 	}{arg1})
+	stub := fake.NotifyCloseStub
+	fakeReturns := fake.notifyCloseReturns
 	fake.recordInvocation("NotifyClose", []interface{}{arg1})
 	fake.notifyCloseMutex.Unlock()
-	if fake.NotifyCloseStub != nil {
-		return fake.NotifyCloseStub(arg1)
+	if stub != nil {
+		return stub(arg1)
 	}
 	if specificReturn {
 		return ret.result1
 	}
-	fakeReturns := fake.notifyCloseReturns
 	return fakeReturns.result1
 }
 

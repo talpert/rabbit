@@ -60,15 +60,16 @@ func (fake *FakeAmqpChannel) Cancel(arg1 string, arg2 bool) error {
 		arg1 string
 		arg2 bool
 	}{arg1, arg2})
+	stub := fake.CancelStub
+	fakeReturns := fake.cancelReturns
 	fake.recordInvocation("Cancel", []interface{}{arg1, arg2})
 	fake.cancelMutex.Unlock()
-	if fake.CancelStub != nil {
-		return fake.CancelStub(arg1, arg2)
+	if stub != nil {
+		return stub(arg1, arg2)
 	}
 	if specificReturn {
 		return ret.result1
 	}
-	fakeReturns := fake.cancelReturns
 	return fakeReturns.result1
 }
 
@@ -119,15 +120,16 @@ func (fake *FakeAmqpChannel) Close() error {
 	ret, specificReturn := fake.closeReturnsOnCall[len(fake.closeArgsForCall)]
 	fake.closeArgsForCall = append(fake.closeArgsForCall, struct {
 	}{})
+	stub := fake.CloseStub
+	fakeReturns := fake.closeReturns
 	fake.recordInvocation("Close", []interface{}{})
 	fake.closeMutex.Unlock()
-	if fake.CloseStub != nil {
-		return fake.CloseStub()
+	if stub != nil {
+		return stub()
 	}
 	if specificReturn {
 		return ret.result1
 	}
-	fakeReturns := fake.closeReturns
 	return fakeReturns.result1
 }
 
@@ -178,15 +180,16 @@ func (fake *FakeAmqpChannel) Consume(arg1 string, arg2 string, arg3 bool, arg4 b
 		arg6 bool
 		arg7 amqp.Table
 	}{arg1, arg2, arg3, arg4, arg5, arg6, arg7})
+	stub := fake.ConsumeStub
+	fakeReturns := fake.consumeReturns
 	fake.recordInvocation("Consume", []interface{}{arg1, arg2, arg3, arg4, arg5, arg6, arg7})
 	fake.consumeMutex.Unlock()
-	if fake.ConsumeStub != nil {
-		return fake.ConsumeStub(arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4, arg5, arg6, arg7)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2
 	}
-	fakeReturns := fake.consumeReturns
 	return fakeReturns.result1, fakeReturns.result2
 }
 
