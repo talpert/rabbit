@@ -20,7 +20,7 @@ import (
 func Test_newPool(t *testing.T) {
 	Convey("newPool", t, func() {
 		fakeDialer := &fakeDialer{}
-		fakeDialer.DialReturns(&amqp.Connection{}, nil)
+		fakeDialer.DialReturns(&connectionWrapper{&amqp.Connection{}}, nil)
 
 		cd := &ConnectionDetails{
 			URLs:                     []string{"foobar"},
@@ -56,7 +56,7 @@ func Test_newPool(t *testing.T) {
 func Test_connPool_declareInitialTopology(t *testing.T) {
 	Convey("declareInitialTopology", t, func() {
 		fakeDialer := &fakeDialer{}
-		fakeDialer.DialReturns(&amqp.Connection{}, nil)
+		fakeDialer.DialReturns(&connectionWrapper{&amqp.Connection{}}, nil)
 
 		cd := &ConnectionDetails{
 			URLs:                     []string{"foobar"},
@@ -74,9 +74,10 @@ func Test_connPool_declareInitialTopology(t *testing.T) {
 		}
 
 		// mock the connection
-		fakeConnection := &fakes.FakeAmqpConnection{}
+		fakeConnection := &FakeAmqpConnection{}
+		fakeChannel := &fakes.FakeAmqpChannel{}
+		fakeConnection.ChannelReturns(fakeChannel, nil)
 		conn.amqpConn = fakeConnection
-		fakeConnection.ChannelReturns(&amqp.Channel{}, nil)
 
 		Convey("gets next available connection and declares the topology", func() {
 			called := false
@@ -114,7 +115,7 @@ func Test_connPool_declareInitialTopology(t *testing.T) {
 func Test_connPool_newConnection(t *testing.T) {
 	Convey("newConnection", t, func() {
 		fakeDialer := &fakeDialer{}
-		fakeDialer.DialReturns(&amqp.Connection{}, nil)
+		fakeDialer.DialReturns(&connectionWrapper{&amqp.Connection{}}, nil)
 
 		cd := &ConnectionDetails{
 			URLs:                     []string{"foobar"},
@@ -155,7 +156,7 @@ func Test_connPool_newConnection(t *testing.T) {
 func Test_connPool_getNext(t *testing.T) {
 	Convey("getNext()", t, func() {
 		fakeDialer := &fakeDialer{}
-		fakeDialer.DialReturns(&amqp.Connection{}, nil)
+		fakeDialer.DialReturns(&connectionWrapper{&amqp.Connection{}}, nil)
 
 		cd := &ConnectionDetails{
 			URLs:                     []string{"foobar"},
@@ -235,7 +236,7 @@ func Test_connPool_getNext(t *testing.T) {
 func Test_connPool_establishConsumerChan(t *testing.T) {
 	Convey("establishConsumerChan", t, func() {
 		fakeDialer := &fakeDialer{}
-		fakeDialer.DialReturns(&amqp.Connection{}, nil)
+		fakeDialer.DialReturns(&connectionWrapper{&amqp.Connection{}}, nil)
 
 		cd := &ConnectionDetails{
 			URLs:                     []string{"foobar"},
@@ -254,7 +255,7 @@ func Test_connPool_establishConsumerChan(t *testing.T) {
 		}
 
 		// mock the connection
-		fakeConnection := &fakes.FakeAmqpConnection{}
+		fakeConnection := &FakeAmqpConnection{}
 		conn.amqpConn = fakeConnection
 		// mock the locker
 		fakeRWMux := &fakes.FakeRwLocker{}
@@ -347,7 +348,7 @@ func Test_connPool_deleteConnection(t *testing.T) {
 func Test_connection_connect(t *testing.T) {
 	Convey("connect", t, func() {
 		fakeDialer := &fakeDialer{}
-		fakeDialer.DialReturns(&amqp.Connection{}, nil)
+		fakeDialer.DialReturns(&connectionWrapper{&amqp.Connection{}}, nil)
 
 		connDetails := &ConnectionDetails{
 			URLs:                     []string{"foobar"},
@@ -381,20 +382,20 @@ func Test_connection_connect(t *testing.T) {
 		Convey("if first URL fails, next one is attempted", func() {
 			fakeDialer.DialReturnsOnCall(0, nil, errors.New("failed dial"))
 			id := 235 // just to identify the returned connection
-			fakeDialer.DialReturnsOnCall(1, &amqp.Connection{Major: id}, nil)
+			fakeDialer.DialReturnsOnCall(1, &connectionWrapper{&amqp.Connection{Major: id}}, nil)
 			connDetails.URLs = []string{"foo", "bar"}
 
 			err := conn.connect()
 			So(err, ShouldBeNil)
 			So(fakeDialer.DialCallCount(), ShouldEqual, 2)
 			So(conn.amqpConn, ShouldNotBeNil)
-			ac, ok := conn.amqpConn.(*amqp.Connection)
+			ac, ok := conn.amqpConn.(*connectionWrapper)
 			So(ok, ShouldBeTrue)
 			So(ac.Major, ShouldEqual, id)
 		})
 
 		Convey("uses TLS if specified", func() {
-			fakeDialer.DialTLSReturns(&amqp.Connection{}, nil)
+			fakeDialer.DialTLSReturns(&connectionWrapper{&amqp.Connection{}}, nil)
 			connDetails.UseTLS = true
 
 			err := conn.connect()
@@ -404,7 +405,7 @@ func Test_connection_connect(t *testing.T) {
 		})
 
 		Convey("skips TLS verify if specified", func() {
-			fakeDialer.DialTLSReturns(&amqp.Connection{}, nil)
+			fakeDialer.DialTLSReturns(&connectionWrapper{&amqp.Connection{}}, nil)
 			connDetails.UseTLS = true
 			connDetails.SkipVerifyTLS = true
 
@@ -435,7 +436,9 @@ func Test_connection_connect(t *testing.T) {
 
 func Test_connection_declareTopology(t *testing.T) {
 	Convey("declareTopology", t, func() {
-		fakeConnection := &fakes.FakeAmqpConnection{}
+		fakeConnection := &FakeAmqpConnection{}
+		fakeChannel := &fakes.FakeAmqpChannel{}
+		fakeConnection.ChannelReturns(fakeChannel, nil)
 
 		called := false
 
@@ -443,8 +446,6 @@ func Test_connection_declareTopology(t *testing.T) {
 			amqpConn:    fakeConnection,
 			topologyDef: func(*amqp.Channel) error { called = true; return nil },
 		}
-
-		fakeConnection.ChannelReturns(&amqp.Channel{}, nil)
 
 		Convey("declares the topology", func() {
 			err := conn.declareTopology()
@@ -520,7 +521,7 @@ func Test_connection_consumerHelpers(t *testing.T) {
 func Test_connection_watchNotifyClose(t *testing.T) {
 	Convey("watchNotifyClose", t, func() {
 		fakeDialer := &fakeDialer{}
-		fakeDialer.DialReturns(&amqp.Connection{}, nil)
+		fakeDialer.DialReturns(&connectionWrapper{&amqp.Connection{}}, nil)
 
 		connDetails := &ConnectionDetails{
 			URLs:                     []string{"foobar"},
@@ -579,7 +580,7 @@ func Test_connection_watchNotifyClose(t *testing.T) {
 func Test_connection_restart(t *testing.T) {
 	Convey("restart", t, func() {
 		fakeDialer := &fakeDialer{}
-		fakeConnection := &fakes.FakeAmqpConnection{}
+		fakeConnection := &FakeAmqpConnection{}
 		fakeDialer.DialReturns(fakeConnection, nil)
 		fakeConnection.ChannelReturns(&amqp.Channel{}, nil)
 
@@ -620,10 +621,11 @@ func Test_connection_restart(t *testing.T) {
 		})
 
 		Convey("redeclares topology if defined", func() {
-			fakeAMQPConn := &fakes.FakeAmqpConnection{}
-			fakeAMQPConn.ChannelReturns(&amqp.Channel{}, nil)
-			fakeDialer.DialReturns(fakeAMQPConn, nil)
-			conn.amqpConn = fakeAMQPConn
+			fakeConnection := &FakeAmqpConnection{}
+			fakeChannel := &fakes.FakeAmqpChannel{}
+			fakeConnection.ChannelReturns(fakeChannel, nil)
+			fakeDialer.DialReturns(fakeConnection, nil)
+			conn.amqpConn = fakeConnection
 			topologyCalled := false
 			conn.topologyDef = func(ch *amqp.Channel) error { topologyCalled = true; return nil }
 
@@ -646,7 +648,7 @@ func Test_connection_restart(t *testing.T) {
 func Test_connection_reconnect(t *testing.T) {
 	Convey("reconnect", t, func() {
 		fakeDialer := &fakeDialer{}
-		fakeDialer.DialReturns(&amqp.Connection{}, nil)
+		fakeDialer.DialReturns(&connectionWrapper{&amqp.Connection{}}, nil)
 
 		connDetails := &ConnectionDetails{
 			URLs:                     []string{"foobar"},
@@ -673,7 +675,7 @@ func Test_connection_reconnect(t *testing.T) {
 		Convey("will retry connection until successful", func() {
 			n := 25
 			fakeDialer.DialReturns(nil, errors.New("dial failure"))
-			fakeDialer.DialReturnsOnCall(n, &amqp.Connection{}, nil)
+			fakeDialer.DialReturnsOnCall(n, &connectionWrapper{&amqp.Connection{}}, nil)
 
 			conn.reconnect()
 			So(fakeDialer.DialCallCount(), ShouldEqual, n+1)
@@ -683,7 +685,7 @@ func Test_connection_reconnect(t *testing.T) {
 
 func Test_connection_restartConsumers(t *testing.T) {
 	Convey("restartConsumers", t, func() {
-		fakeConnection := &fakes.FakeAmqpConnection{}
+		fakeConnection := &FakeAmqpConnection{}
 		fakeConnection.ChannelReturns(&amqp.Channel{}, nil)
 		closeChan := make(chan *amqp.Error)
 		fakeRWMux := &fakes.FakeRwLocker{}
@@ -715,6 +717,7 @@ func Test_connection_restartConsumers(t *testing.T) {
 		Convey("skips consumers that have been cancelled", func() {
 			fakeStatus := statusCancelled
 			fakeConsumer.GetStatusReturns(fakeStatus)
+
 			err := conn.restartConsumers()
 			So(err, ShouldBeNil)
 			So(fakeConsumer.GetStatusCallCount(), ShouldEqual, 1)
@@ -722,11 +725,21 @@ func Test_connection_restartConsumers(t *testing.T) {
 		})
 
 		Convey("errors if channel creation fails", func() {
+			fakeConnection.ChannelReturns(nil, errors.New("no channel for you!"))
 
+			err := conn.restartConsumers()
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "no channel")
 		})
 
 		Convey("errors if consumer restart fails", func() {
+			fakeChannel := &fakes.FakeAmqpChannel{}
+			fakeConnection.ChannelReturns(fakeChannel, nil)
+			fakeConsumer.RestartReturns(errors.New("consumer fail"))
 
+			err := conn.restartConsumers()
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "consumer fail")
 		})
 	})
 }
@@ -737,7 +750,7 @@ func Test_connection_restartConsumers(t *testing.T) {
 
 func TestWrappers(t *testing.T) {
 	Convey("the structs meet our wrapper interfaces ", t, func() {
-		var _ amqpConnection = &amqp.Connection{}
+		var _ amqpConnection = &connectionWrapper{&amqp.Connection{}}
 		var _ amqpChannel = &amqp.Channel{}
 		var _ rwLocker = &sync.RWMutex{}
 	})

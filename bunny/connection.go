@@ -105,22 +105,13 @@ func (c *connection) declareTopology() error {
 
 	// always try to close this, even if there is an error
 	defer func() {
-		// if the original amqp connection was mocked, then break out of this and
-		//  skip closing the channel. This is super gross but the stupid amqp lib
-		//  does not offer a clean way to mock any of its parts so resorting to this
-		// TODO: figure out a way to avoid this kind of thing
-		_, ok := c.amqpConn.(*amqp.Connection)
-		if !ok {
-			return
-		}
-
 		if err := ch.Close(); err != nil {
 			// log this but allow execution to continue
 			log.Errorf("failed to close channel for topology declaration: %v", err)
 		}
 	}()
 
-	if err := c.topologyDef(ch); err != nil {
+	if err := c.topologyDef(unwrapChannel(ch)); err != nil {
 		return err
 	}
 
@@ -309,7 +300,7 @@ func (c *connPool) establishConsumerChan(consumer *consumer) error {
 
 	log.Debug("running channel topology setup func...")
 	// run user provided topology setup
-	if err := consumer.chanSetupFunc(ch); err != nil {
+	if err := consumer.chanSetupFunc(unwrapChannel(ch)); err != nil {
 		return fmt.Errorf("failed to setup channel with provided func: %v", err)
 	}
 
@@ -499,20 +490,43 @@ type dialer interface {
 type amqpDialer struct{}
 
 func (d *amqpDialer) Dial(url string) (amqpConnection, error) {
-	return amqp.Dial(url)
+	conn, err := amqp.Dial(url)
+	return &connectionWrapper{conn}, err
 }
 
 func (d *amqpDialer) DialTLS(url string, amqps *tls.Config) (amqpConnection, error) {
-	return amqp.DialTLS(url, amqps)
+	conn, err := amqp.DialTLS(url, amqps)
+	return &connectionWrapper{conn}, err
 }
 
-//go:generate counterfeiter -o fakes/fake_amqpConnection.go . amqpConnection
+//go:generate counterfeiter -o fake_amqpConnection_test.go . amqpConnection
 
 // an interface of the amqp.Connection methods that we use, so it can be mocked
 type amqpConnection interface {
 	NotifyClose(receiver chan *amqp.Error) chan *amqp.Error
 	Close() error
-	Channel() (*amqp.Channel, error)
+	Channel() (amqpChannel, error)
+}
+
+type connectionWrapper struct {
+	*amqp.Connection
+}
+
+func (w *connectionWrapper) Channel() (amqpChannel, error) {
+	return w.Connection.Channel()
+}
+
+func (w *connectionWrapper) getConn() *amqp.Connection {
+	return w.Connection
+}
+
+func unwrapChannel(channel amqpChannel) *amqp.Channel {
+	ch, ok := channel.(*amqp.Channel)
+	if ok {
+		return ch
+	}
+
+	return nil
 }
 
 //go:generate counterfeiter -o fakes/fake_amqpChannel.go . amqpChannel

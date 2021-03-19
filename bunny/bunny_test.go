@@ -33,7 +33,7 @@ func TestConnect(t *testing.T) {
 		fakeDialer := &fakeDialer{}
 		bunn.connDetails.dialer = fakeDialer
 
-		fakeDialer.DialReturns(&amqp.Connection{}, nil)
+		fakeDialer.DialReturns(&connectionWrapper{&amqp.Connection{}}, nil)
 
 		Convey("connects to rabbit", func() {
 			err := bunn.Connect()
