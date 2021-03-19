@@ -381,6 +381,8 @@ func (c *connection) restart() {
 		}
 	}
 
+	log.Debug("Restarting all preexisting consumers...")
+
 	if err := c.restartConsumers(); err != nil {
 		log.Errorf("Failed to restart consumers! %v", err)
 		// TODO: handle this better (see comment below)

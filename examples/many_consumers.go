@@ -73,7 +73,7 @@ func main() {
 	// start publishing
 	go publishMessages()
 
-	// sleep for 15 sec. Kill the conn while this is sleeping
+	// sleep for 20 sec. Kill the conn while this is sleeping
 	time.Sleep(time.Second * 20)
 
 	consumerThree, err := bunn.NewConsumerChannel(setupQueue(thirdQueue, thirdKey))

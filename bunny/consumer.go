@@ -174,6 +174,7 @@ func (c *consumer) consume() error {
 func (c *consumer) Cancel(noWait bool) error {
 	// This will trigger a close of the delivery channel and stop the consumer loop as well
 	if err := c.amqpChan.Cancel(c.consumerTag, noWait); err != nil {
+		// TODO: check here if this is a closed channel and if so, no need to error
 		return err
 	}
 
@@ -194,6 +195,9 @@ func (c *consumer) Cancel(noWait bool) error {
 func (c *consumer) restart(ch amqpChannel) error {
 	log.Debugf("Restarting consumer %s...", c.id)
 
+	// save the new channel
+	c.amqpChan = ch
+
 	// TODO: first kill the previous consumer to make sure that we do not leave it dangling
 
 	ach, ok := ch.(*amqp.Channel)
@@ -202,6 +206,8 @@ func (c *consumer) restart(ch amqpChannel) error {
 	//  we can get this working. Long term maybe add a "getChannel" to the interface and
 	//  mock that to return an empty channel struct
 	if ok {
+		log.Debugf("calling consumer setup function on restart for consumerID: %s", c.id)
+
 		if err := c.chanSetupFunc(ach); err != nil {
 			return fmt.Errorf("failed to setup channel topology on restart: %v", err)
 		}
